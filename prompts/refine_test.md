@@ -22,6 +22,11 @@ missed the conditions the bug depends on. Consider:
 - Did the test exercise the path the reporter actually described?
 - Does the bug depend on navigation rather than a full reload, or the reverse?
 - Does it need particular state, timing, or a second interaction to surface?
+- If the test passed, does the bug require a condition that did not occur?
+  An issue conditional on a failure, an error state, or unusual data will not
+  reproduce against a healthy application, so the test may have to create that
+  condition itself. Intercepting a network request and returning an error
+  response is one way to do this.
 - Did the run fail before reaching the assertion, because of setup, missing
   dependencies, or a bad selector? If so, fix that rather than changing the
   hypothesis.

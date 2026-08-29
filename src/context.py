@@ -39,9 +39,17 @@ STOPWORDS = {
     "into", "over", "under", "each", "some", "any", "all", "can", "cannot",
 }
 
-MAX_FILES = 6
+# The model has a large context window, so the budget is set by how much the
+# ranker can usefully surface rather than by what fits. Too few files and it
+# guesses at routes and form labels it never saw.
+MAX_FILES = 12
 MAX_FILE_CHARS = 4000
-MAX_TOTAL_CHARS = 24000
+MAX_TOTAL_CHARS = 40000
+
+# Almost every browser reproduction has to navigate and sign in, so the files
+# defining routes and the login form are worth including whether or not the
+# issue text happens to mention them.
+ALWAYS_INCLUDE = ("app.jsx", "app.tsx", "login.jsx", "login.tsx", "routes.jsx")
 
 
 def _run(args: list[str], cwd: Path | None = None) -> str:
@@ -133,7 +141,12 @@ def select_relevant_files(
         ((_score(path, root, keywords), path) for path in candidates),
         key=lambda pair: (-pair[0], str(pair[1])),
     )
-    return [path for score, path in ranked[:max_files] if score > 0]
+    selected = [path for score, path in ranked[:max_files] if score > 0]
+
+    for path in candidates:
+        if path.name.lower() in ALWAYS_INCLUDE and path not in selected:
+            selected.append(path)
+    return selected
 
 
 def gather_context(
