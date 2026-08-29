@@ -20,6 +20,7 @@ class OrchestratorIntegrationTests(unittest.TestCase):
                 "https://example.test/repo.git",
                 "issue",
                 1,
+                ref="079886d",
                 setup_command="npm ci",
                 start_command="npm start",
             )
@@ -30,6 +31,7 @@ class OrchestratorIntegrationTests(unittest.TestCase):
                 plan,
                 setup_command="npm ci",
                 start_command="npm start",
+                ref="079886d",
             )
             self.assertEqual(
                 (Path(temp) / "attempt-1/nested/reproduce.spec.js").read_text(),

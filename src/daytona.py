@@ -217,6 +217,7 @@ def run_in_daytona(
     plan: ReproductionPlan,
     setup_command: str | None = None,
     start_command: str | None = None,
+    ref: str | None = None,
     *,
     _daytona: Any | None = None,
 ) -> ExecutionResult:
@@ -269,9 +270,22 @@ def run_in_daytona(
     try:
         try:
             sandbox = _daytona.create()
-            sandbox.git.clone(repo_url.strip(), _REPO_DIR, depth=1)
+            if ref:
+                # A shallow clone only fetches the default branch tip, so an
+                # arbitrary commit has to be fetched explicitly.
+                sandbox.git.clone(repo_url.strip(), _REPO_DIR)
+            else:
+                sandbox.git.clone(repo_url.strip(), _REPO_DIR, depth=1)
         except Exception as exc:
             return ExecutionResult(-1, "", f"Could not create sandbox or clone repository: {exc}", False, "Repository setup failed", [])
+
+        if ref:
+            checkout = _run_stage(
+                sandbox, "checkout", f"git checkout {shlex.quote(ref)}", timeout=120
+            )
+            logs.append(("checkout", checkout))
+            if checkout.exit_code:
+                return _result("Repository checkout", checkout, logs)
 
         try:
             remote_test_path = posixpath.join(_REPO_DIR, test_path)
