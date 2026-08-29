@@ -1,48 +1,172 @@
-"""Reproduction test generation and refinement.
+"""Reproduction test generation and refinement on Nosana.
 
-Task 3's Nosana call is still represented by a deterministic generator.  The
-fallback targets the selected YesFundMe demo, allowing the complete
-orchestrator and Daytona integration to be demonstrated while model-provider
-selection is finalized.
+Task 3. The model reads the issue, the repository context and the evidence from
+previous attempts, and returns a Playwright reproduction hypothesis.
+
+Nosana serves models through Ollama, which exposes an OpenAI-compatible chat
+completions endpoint, so any client speaking that protocol works. Configuration
+comes from the environment rather than the source, because deployment URLs are
+disposable and this repository may become public.
 """
+
+import json
+import os
+import re
+import urllib.error
+import urllib.request
+from pathlib import Path
 
 from .models import ExecutionResult, ReproductionPlan, RepositoryContext
 
-DEMO_TEST = """\
-const { test, expect } = require('@playwright/test');
+PROMPT_DIR = Path(__file__).resolve().parent.parent / "prompts"
 
-test('shows the API error when campaign creation fails', async ({ page }) => {
-  await page.goto('/login');
-  await page.getByLabel('Username or Email').fill('testuser');
-  await page.getByLabel('Password').fill('password123');
-  await page.getByRole('button', { name: 'Sign in' }).click();
-  await expect(page).toHaveURL(/\\/dashboard$/);
+DEFAULT_MODEL = "qwen3.6:27b"
 
-  await page.route('**/api/campaigns', async (route) => {
-    if (route.request().method() === 'POST') {
-      await route.fulfill({
-        status: 503,
-        contentType: 'application/json',
-        body: JSON.stringify({ error: 'Service temporarily unavailable' }),
-      });
-    } else {
-      await route.continue();
+# Warm generation takes about a minute, but the first call after a deployment
+# starts also waits for the model to load into VRAM.
+DEFAULT_TIMEOUT = 600
+
+# Evidence from earlier attempts, trimmed so a long log cannot crowd out the
+# repository context.
+MAX_EVIDENCE_CHARS = 3000
+
+
+class GenerationError(RuntimeError):
+    """Raised when the model could not be reached or its reply was unusable."""
+
+
+def _endpoint() -> str:
+    base = os.environ.get("NOSANA_BASE_URL", "").strip().rstrip("/")
+    if not base:
+        raise GenerationError(
+            "NOSANA_BASE_URL is not set. Point it at a running deployment, or "
+            "pass --mock to use canned responses."
+        )
+    return f"{base}/v1/chat/completions"
+
+
+def _load_prompt(name: str) -> str:
+    return (PROMPT_DIR / name).read_text()
+
+
+def _truncate(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[:limit] + "\n... truncated ...\n"
+
+
+def _format_context(context: RepositoryContext) -> dict[str, str]:
+    return {
+        "package_json": context.package_json or "(none found)",
+        "readme": context.readme or "(none found)",
+        "file_tree": context.file_tree or "(empty)",
+        "relevant_files": "\n\n".join(context.relevant_files) or "(none selected)",
     }
-  });
 
-  await page.goto('/campaigns/new');
-  await page.getByLabel('Campaign Title').fill('Playwright campaign');
-  await page
-    .getByLabel('Description')
-    .fill('A sufficiently long campaign description for reproduction.');
-  await page.getByLabel('Goal Amount ($)').fill('100');
-  await page.getByRole('button', { name: 'Create Campaign' }).click();
 
-  await expect(
-    page.getByText('Service temporarily unavailable', { exact: true }),
-  ).toBeVisible();
-});
-"""
+def _format_evidence(previous_results: list[ExecutionResult]) -> str:
+    """Render earlier attempts as the evidence the model reasons about."""
+    blocks = []
+    for index, result in enumerate(previous_results, start=1):
+        blocks.append(
+            f"### Attempt {index}\n"
+            f"Exit code: {result.exit_code}\n"
+            f"Outcome: {result.reason or 'unknown'}\n\n"
+            f"stdout:\n{_truncate(result.stdout, MAX_EVIDENCE_CHARS)}\n\n"
+            f"stderr:\n{_truncate(result.stderr, MAX_EVIDENCE_CHARS)}"
+        )
+    return "\n\n".join(blocks)
+
+
+def _fill(template: str, values: dict[str, str]) -> str:
+    """Substitute {placeholders} without tripping over JSON braces in the text."""
+    filled = template
+    for key, value in values.items():
+        filled = filled.replace("{" + key + "}", value)
+    return filled
+
+
+def _strip_reasoning(text: str) -> str:
+    """Remove the thinking block that reasoning models emit before answering."""
+    return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+
+
+def extract_json(text: str) -> dict:
+    """Pull a JSON object out of a model reply.
+
+    Models wrap their output in prose, code fences, or reasoning traces even
+    when told not to, so locating the object matters more than trusting the
+    format.
+    """
+    cleaned = _strip_reasoning(text)
+
+    fenced = re.search(r"```(?:json)?\s*(.*?)```", cleaned, flags=re.DOTALL)
+    if fenced:
+        cleaned = fenced.group(1).strip()
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        pass
+
+    # Fall back to the outermost braces, which survives trailing commentary.
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start != -1 and end > start:
+        try:
+            return json.loads(cleaned[start : end + 1])
+        except json.JSONDecodeError as exc:
+            raise GenerationError(f"Model reply was not valid JSON: {exc}") from exc
+
+    raise GenerationError("Model reply contained no JSON object")
+
+
+def _plan_from(payload: dict) -> ReproductionPlan:
+    """Build a plan from a model reply, requiring the fields that matter."""
+    test_code = payload.get("testCode", "").strip()
+    if not test_code:
+        raise GenerationError("Model reply contained no testCode")
+
+    return ReproductionPlan(
+        summary=payload.get("summary", "").strip(),
+        setup_notes=payload.get("setupNotes", "").strip(),
+        test_file_name=payload.get("testFileName", "reproduce.spec.js").strip(),
+        test_code=test_code,
+        expected_failure=payload.get("expectedFailure", "").strip(),
+    )
+
+
+def _complete(prompt: str, timeout: int = DEFAULT_TIMEOUT) -> str:
+    """Send one chat completion request and return the reply text."""
+    body = json.dumps(
+        {
+            "model": os.environ.get("NOSANA_MODEL", DEFAULT_MODEL),
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.2,
+            "stream": False,
+        }
+    ).encode()
+
+    headers = {"Content-Type": "application/json"}
+    api_key = os.environ.get("NOSANA_API_KEY", "").strip()
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+
+    request = urllib.request.Request(_endpoint(), data=body, headers=headers)
+    try:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            payload = json.loads(response.read())
+    except urllib.error.HTTPError as exc:
+        raise GenerationError(
+            f"Nosana returned {exc.code}: {exc.read().decode(errors='replace')[:400]}"
+        ) from exc
+    except (urllib.error.URLError, TimeoutError) as exc:
+        raise GenerationError(f"Could not reach Nosana: {exc}") from exc
+
+    try:
+        return payload["choices"][0]["message"]["content"]
+    except (KeyError, IndexError) as exc:
+        raise GenerationError(f"Unexpected response shape: {payload}") from exc
 
 
 def generate_reproduction_test(
@@ -50,26 +174,15 @@ def generate_reproduction_test(
     context: RepositoryContext,
     previous_results: list[ExecutionResult],
 ) -> ReproductionPlan:
-    """Return the deterministic selected-demo plan until Nosana is enabled."""
-    refinement = ""
+    """Generate a reproduction plan, refining it against previous evidence."""
+    values = _format_context(context)
+    values["issue"] = issue
+
     if previous_results:
-        refinement = (
-            " Refined after the prior sandbox evidence by keeping API failure "
-            "interception scoped to only the campaign-creation POST."
-        )
-    return ReproductionPlan(
-        summary=(
-            "Submit a valid campaign while deterministically returning HTTP 503 "
-            "and assert that the API error is visible." + refinement
-        ),
-        setup_notes=(
-            "Use pinned YesFundMe revision 079886d51a871b2c4e43377a1a33e456d93cdd91; "
-            "run the database seed before starting the app."
-        ),
-        test_file_name="reproduce.spec.js",
-        test_code=DEMO_TEST,
-        expected_failure=(
-            "Service temporarily unavailable should be visible, but the element "
-            "is not rendered."
-        ),
-    )
+        template = _load_prompt("refine_test.md")
+        values["previous_attempts"] = _format_evidence(previous_results)
+    else:
+        template = _load_prompt("generate_test.md")
+
+    reply = _complete(_fill(template, values))
+    return _plan_from(extract_json(reply))

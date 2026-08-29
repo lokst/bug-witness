@@ -116,6 +116,61 @@ class DaytonaRunnerTests(unittest.TestCase):
         self.assertEqual(len(wrapped_commands), 1)
         client.sandbox.delete.assert_called_once()
 
+    def test_pinned_ref_is_checked_out_from_a_full_clone(self):
+        client = FakeDaytona(
+            {
+                "checkout": (0, "", ""),
+                "setup": (0, "", ""),
+                "start": (0, "", ""),
+                "test": (0, "1 passed", ""),
+            }
+        )
+        run_in_daytona(
+            "https://example.test/repo.git", PLAN, ref="079886d", _daytona=client
+        )
+
+        # A shallow clone cannot reach an arbitrary commit, so depth must be
+        # omitted when a ref is pinned.
+        self.assertEqual(
+            client.sandbox.git.clone.call_args.kwargs.get("depth"), None
+        )
+        checkouts = [
+            command
+            for command, _ in client.sandbox.process.commands
+            if "git checkout" in command
+        ]
+        self.assertEqual(len(checkouts), 1)
+        self.assertIn("079886d", checkouts[0])
+
+    def test_failed_checkout_is_not_a_reproduction(self):
+        client = FakeDaytona({"checkout": (128, "", "fatal: reference is not a tree")})
+        result = run_in_daytona(
+            "https://example.test/repo.git", PLAN, ref="deadbee", _daytona=client
+        )
+
+        self.assertFalse(result.reproduced)
+        self.assertEqual(result.reason, "Repository checkout failed with exit code 128")
+        setups = [
+            command
+            for command, _ in client.sandbox.process.commands
+            if ".repro-agent/setup" in command
+        ]
+        self.assertEqual(setups, [])
+
+    def test_unpinned_clone_stays_shallow(self):
+        client = FakeDaytona(
+            {"setup": (0, "", ""), "start": (0, "", ""), "test": (0, "1 passed", "")}
+        )
+        run_in_daytona("https://example.test/repo.git", PLAN, _daytona=client)
+
+        self.assertEqual(client.sandbox.git.clone.call_args.kwargs.get("depth"), 1)
+        checkouts = [
+            command
+            for command, _ in client.sandbox.process.commands
+            if "git checkout" in command
+        ]
+        self.assertEqual(checkouts, [])
+
     def test_test_infrastructure_failure_is_not_a_reproduction(self):
         client = FakeDaytona(
             {

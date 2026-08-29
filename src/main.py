@@ -78,8 +78,20 @@ def run(
     ref: str | None = None,
     setup_command: str | None = None,
     start_command: str | None = None,
+    mock: bool = False,
 ) -> bool:
     """Drive the think, execute, reflect loop. Returns whether it reproduced."""
+    if mock:
+        from . import mocks
+
+        generate = mocks.generate_reproduction_test
+        execute = mocks.run_in_daytona
+        print("Running with canned Nosana and Daytona responses")
+    else:
+        # Resolved here so tests can patch the module attributes.
+        generate = generate_reproduction_test
+        execute = run_in_daytona
+
     print("Gathering repository context")
     context = gather_context(repo, issue=issue, ref=ref)
     print(f"  {len(context.relevant_files)} relevant files selected")
@@ -91,16 +103,17 @@ def run(
 
     for attempt in range(1, max_attempts + 1):
         print(f"Attempt {attempt}/{max_attempts}: generating reproduction test")
-        plan = generate_reproduction_test(issue, context, previous_results)
+        plan = generate(issue, context, previous_results)
         print(f"  {plan.summary}")
 
         print(f"Attempt {attempt}/{max_attempts}: running in sandbox")
         result = classify(
-            run_in_daytona(
+            execute(
                 repo,
                 plan,
                 setup_command=setup_command,
                 start_command=start_command,
+                ref=ref,
             )
         )
         print(f"  {result.reason}")
@@ -128,10 +141,17 @@ def main() -> int:
     parser.add_argument(
         "--ref",
         default=None,
-        help="Commit or tag to pin the repository to. Recommended: default "
-        "branches move, and a moved branch may no longer contain the bug.",
+        help="Commit or tag to pin the repository to, for both context "
+        "gathering and sandbox execution. Recommended: default branches move, "
+        "and a moved branch may no longer contain the bug.",
     )
     parser.add_argument("--max-attempts", type=int, default=3)
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        help="Use canned responses instead of Nosana and Daytona, for "
+        "demoing without network access",
+    )
     parser.add_argument(
         "--setup-command",
         help="Repository setup command (default: generic npm/Playwright setup)",
@@ -152,6 +172,7 @@ def main() -> int:
         ref=args.ref,
         setup_command=args.setup_command,
         start_command=args.start_command,
+        mock=args.mock,
     )
     return 0 if reproduced else 1
 
