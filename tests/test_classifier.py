@@ -47,26 +47,26 @@ LOCATED_PLAN = ReproductionPlan(
 )
 
 
-def test_result(exit_code, stdout, stderr="", stage="test"):
+def make_result(exit_code, stdout, stderr="", stage="test"):
     return ExecutionResult(exit_code, stdout, stderr, stage=stage)
 
 
 class ClassifierTests(unittest.TestCase):
     def test_passing_playwright_run_is_not_reproduced(self):
-        result = classify(test_result(0, "1 passed"), PLAN)
+        result = classify(make_result(0, "1 passed"), PLAN)
 
         self.assertFalse(result.reproduced)
         self.assertIn("passed", result.reason)
 
     def test_syntax_error_is_infrastructure_failure(self):
-        result = classify(test_result(1, "SyntaxError: unexpected token"), PLAN)
+        result = classify(make_result(1, "SyntaxError: unexpected token"), PLAN)
 
         self.assertFalse(result.reproduced)
         self.assertIn("could not complete", result.reason)
 
     def test_missing_browser_is_infrastructure_failure(self):
         result = classify(
-            test_result(1, "", "browserType.launch: Executable doesn't exist"), PLAN
+            make_result(1, "", "browserType.launch: Executable doesn't exist"), PLAN
         )
 
         self.assertFalse(result.reproduced)
@@ -79,33 +79,33 @@ class ClassifierTests(unittest.TestCase):
             "    Call log:\n"
             "      - waiting for getByRole('button', { name: /login/i })\n"
         )
-        result = classify(test_result(1, stdout), PLAN)
+        result = classify(make_result(1, stdout), PLAN)
 
         self.assertFalse(result.reproduced)
         self.assertIn("locator.click: Test timeout of 30000ms exceeded", result.reason)
         self.assertIn("waiting for getByRole('button', { name: /login/i })", result.reason)
 
     def test_failure_without_assertion_is_not_reproduced(self):
-        result = classify(test_result(1, "Error: something else went wrong"), PLAN)
+        result = classify(make_result(1, "Error: something else went wrong"), PLAN)
 
         self.assertFalse(result.reproduced)
         self.assertIn("no assertion", result.reason)
 
     def test_assertion_matching_expected_failure_is_reproduced(self):
-        result = classify(test_result(1, MATCHING_ASSERTION), PLAN)
+        result = classify(make_result(1, MATCHING_ASSERTION), PLAN)
 
         self.assertTrue(result.reproduced)
         self.assertIn("bug reproduced", result.reason)
 
     def test_unrelated_assertion_is_not_reproduced(self):
-        result = classify(test_result(1, UNRELATED_ASSERTION), PLAN)
+        result = classify(make_result(1, UNRELATED_ASSERTION), PLAN)
 
         self.assertFalse(result.reproduced)
         self.assertIn("does not match", result.reason)
 
     def test_assertion_cannot_be_verified_without_expected_failure(self):
         plan = ReproductionPlan("", "", "reproduce.spec.ts", "", "")
-        result = classify(test_result(1, MATCHING_ASSERTION), plan)
+        result = classify(make_result(1, MATCHING_ASSERTION), plan)
 
         self.assertFalse(result.reproduced)
         self.assertIn("no expected failure", result.reason)
@@ -124,12 +124,12 @@ class ClassifierTests(unittest.TestCase):
             "===== setup stdout =====\nnpm WARN SyntaxError in optional dependency\n"
             f"===== test stdout =====\n{MATCHING_ASSERTION}"
         )
-        result = classify(test_result(1, stdout), PLAN)
+        result = classify(make_result(1, stdout), PLAN)
 
         self.assertTrue(result.reproduced)
 
     def test_classify_returns_a_new_result_without_mutating_input(self):
-        original = test_result(1, MATCHING_ASSERTION)
+        original = make_result(1, MATCHING_ASSERTION)
         result = classify(original, PLAN)
 
         self.assertTrue(result.reproduced)
@@ -146,7 +146,7 @@ class ClassifierTests(unittest.TestCase):
             "         |     ^\n"
             "       8 |   ).toBeVisible();\n"
         )
-        result = classify(test_result(1, stdout), LOCATED_PLAN)
+        result = classify(make_result(1, stdout), LOCATED_PLAN)
 
         self.assertTrue(result.reproduced)
         self.assertIn("final assertion", result.reason)
@@ -161,7 +161,7 @@ class ClassifierTests(unittest.TestCase):
             "        at /home/daytona/repo/reproduce.spec.js:4:22\n"
         )
         plan = ReproductionPlan("", "", "reproduce.spec.js", LOCATED_TEST, "expected dashboard, received login")
-        result = classify(test_result(1, stdout), plan)
+        result = classify(make_result(1, stdout), plan)
 
         self.assertFalse(result.reproduced)
         self.assertIn("before the plan's final assertion", result.reason)
@@ -189,7 +189,7 @@ class ClassifierTests(unittest.TestCase):
             ),
         )
         result = classify(
-            test_result(fixture["exit_code"], fixture["stdout"], fixture["stderr"]), plan
+            make_result(fixture["exit_code"], fixture["stdout"], fixture["stderr"]), plan
         )
 
         self.assertTrue(result.reproduced)
