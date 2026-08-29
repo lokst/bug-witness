@@ -75,11 +75,14 @@ def run(
     repo: str,
     issue: str,
     max_attempts: int,
+    ref: str | None = None,
     setup_command: str | None = None,
     start_command: str | None = None,
 ) -> bool:
     """Drive the think, execute, reflect loop. Returns whether it reproduced."""
-    context = gather_context(repo)
+    print("Gathering repository context")
+    context = gather_context(repo, issue=issue, ref=ref)
+    print(f"  {len(context.relevant_files)} relevant files selected")
     previous_results: list[ExecutionResult] = []
 
     plan = None
@@ -122,6 +125,12 @@ def main() -> int:
     parser.add_argument(
         "--issue", required=True, help="Path to a file containing the issue text"
     )
+    parser.add_argument(
+        "--ref",
+        default=None,
+        help="Commit or tag to pin the repository to. Recommended: default "
+        "branches move, and a moved branch may no longer contain the bug.",
+    )
     parser.add_argument("--max-attempts", type=int, default=3)
     parser.add_argument(
         "--setup-command",
@@ -140,6 +149,7 @@ def main() -> int:
         args.repo,
         issue,
         args.max_attempts,
+        ref=args.ref,
         setup_command=args.setup_command,
         start_command=args.start_command,
     )
