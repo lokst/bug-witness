@@ -23,6 +23,10 @@ File tree:
 - Use `@playwright/test`.
 - Assume the application is already running and reachable at the base URL.
 - Prefer role and label based selectors over CSS selectors.
+- Take every route, button label, field label and heading from the source
+  files above. Read the components the test touches and quote their actual
+  text. A selector guessed from convention will not match, and the test will
+  time out before it reaches the behaviour under test.
 - Assert the specific behaviour the issue describes, not incidental details.
 - Keep the test to a single focused scenario.
 

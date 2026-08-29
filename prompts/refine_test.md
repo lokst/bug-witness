@@ -10,6 +10,9 @@ that run to form a better hypothesis.
 File tree:
 {file_tree}
 
+Relevant files:
+{relevant_files}
+
 ## Previous attempts
 
 {previous_attempts}
@@ -35,6 +38,9 @@ missed the conditions the bug depends on. Consider:
 
 - Change the reproduction strategy in a way the evidence justifies.
 - Explain the change in the summary field.
+- If a selector timed out, do not guess a different one. Find the element in
+  the source files above and quote its actual text. Loosening a selector into
+  a regex does not help when the wording is wrong.
 - Keep everything else as constrained as the first attempt.
 
 ## Output

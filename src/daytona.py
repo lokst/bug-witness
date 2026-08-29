@@ -24,6 +24,7 @@ import os
 import posixpath
 import shlex
 import tempfile
+import time
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -195,6 +196,26 @@ def _download_artifacts(sandbox: Any, local_dir: Path) -> list[str]:
     return saved
 
 
+def _delete_sandbox(sandbox: Any, client: Any, attempts: int = 3) -> None:
+    """Delete a sandbox, retrying while it is still changing state.
+
+    A sandbox that survives the run keeps billing, and deletion is refused
+    while a stage is still shutting down, so one attempt is not enough.
+    """
+    for attempt in range(attempts):
+        try:
+            if hasattr(sandbox, "delete"):
+                sandbox.delete()
+            else:
+                client.delete(sandbox, timeout=60, wait=True)
+            return
+        except Exception:
+            # Cleanup failure should not replace the actionable execution
+            # result, but it is worth another try before giving up.
+            if attempt < attempts - 1:
+                time.sleep(5)
+
+
 def run_in_daytona(
     repo_url: str,
     plan: ReproductionPlan,
@@ -336,12 +357,7 @@ def run_in_daytona(
     except Exception as exc:
         return ExecutionResult(-1, "", f"Daytona execution failed: {exc}", False, "Sandbox execution failed", [], stage="sandbox")
     finally:
+        # Runs for KeyboardInterrupt too, so an interrupted run does not leave a
+        # sandbox behind billing.
         if sandbox is not None:
-            try:
-                if hasattr(sandbox, "delete"):
-                    sandbox.delete()
-                else:
-                    _daytona.delete(sandbox, timeout=60, wait=True)
-            except Exception:
-                # Cleanup failure should not replace the actionable execution result.
-                pass
+            _delete_sandbox(sandbox, _daytona)
