@@ -1,0 +1,18 @@
+Gathering repository context
+  14 relevant files selected
+Attempt 1/2: generating reproduction test
+  This test logs in, navigates to the Create Campaign page, mocks the API to return an error on POST /api/campaigns, submits the form, and asserts that an error message is visible to the user.
+Attempt 1/2: running in sandbox
+  Playwright could not complete due to a test or browser failure
+Attempt 2/2: generating reproduction test
+  The previous test failed with a timeout waiting for the login button, likely due to a selector mismatch or page state issue. Additionally, the bug only manifests when the API fails, so the test must intercept the request and force an error response. The new test uses more resilient selectors for login and submission, mocks the POST /api/campaigns endpoint to return a 500 error, and asserts that the error message is displayed to the user. If the bug exists, the assertion will fail because the error remains hidden.
+Attempt 2/2: running in sandbox
+  Playwright assertion failed as expected; bug reproduced
+
+BUG REPRODUCED
+Attempt: 2/2
+
+Expected: expect(locator).toBeVisible() failed: Locator: getByText(/failed to create|server error/i) Expected: visible Received: hidden Timeout: 5000ms
+Observed: Playwright assertion failed as expected; bug reproduced
+
+Generated test: outputs/attempt-2/reproduce.spec.ts

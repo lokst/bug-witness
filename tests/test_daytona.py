@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from src.daytona import ReproductionPlan, run_in_daytona
 
@@ -190,6 +190,24 @@ class DaytonaRunnerTests(unittest.TestCase):
             if "git checkout" in command
         ]
         self.assertEqual(checkouts, [])
+
+    def test_interrupt_still_deletes_the_sandbox(self):
+        client = FakeDaytona({"setup": (0, "", ""), "start": (0, "", ""), "test": (0, "", "")})
+        client.sandbox.process.exec = Mock(side_effect=KeyboardInterrupt)
+
+        # A sandbox that survives an interrupted run keeps billing.
+        with self.assertRaises(KeyboardInterrupt):
+            run_in_daytona("https://example.test/repo.git", PLAN, _daytona=client)
+        client.sandbox.delete.assert_called_once()
+
+    def test_deletion_is_retried_while_state_is_changing(self):
+        client = FakeDaytona({"setup": (0, "", ""), "start": (0, "", ""), "test": (0, "1 passed", "")})
+        client.sandbox.delete = Mock(side_effect=[RuntimeError("state change in progress"), None])
+
+        with patch("src.daytona.time.sleep"):
+            run_in_daytona("https://example.test/repo.git", PLAN, _daytona=client)
+
+        self.assertEqual(client.sandbox.delete.call_count, 2)
 
     def test_rejects_test_path_traversal_without_creating_sandbox(self):
         client = Mock()
