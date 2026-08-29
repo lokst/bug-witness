@@ -46,6 +46,12 @@ MAX_FILES = 12
 MAX_FILE_CHARS = 4000
 MAX_TOTAL_CHARS = 40000
 
+# The file tree is a map, not evidence, so it gets a much smaller share of the
+# prompt than the files themselves. Paths at or above this depth are listed
+# individually; deeper ones collapse to a count.
+MAX_TREE_CHARS = 8000
+MAX_TREE_DEPTH = 3
+
 # Almost every browser reproduction has to navigate and sign in, so the files
 # defining routes and the login form are worth including whether or not the
 # issue text happens to mention them.
@@ -65,16 +71,25 @@ def _run(args: list[str], cwd: Path | None = None) -> str:
 def clone_repository(repo_url: str, destination: Path, ref: str | None = None) -> Path:
     """Clone a repository, checking out a specific revision when given.
 
-    A pinned ref needs full history, since a shallow clone only fetches the
-    default branch tip.
+    A pinned ref is fetched at depth 1 rather than cloned in full: GitHub
+    serves a fetch for an arbitrary commit, so the whole history is not needed
+    to check one revision out.  Not every host allows that, so a refused fetch
+    falls back to a full clone.
     """
-    if ref:
+    if not ref:
+        _run(["git", "clone", "--quiet", "--depth", "1", repo_url, str(destination)])
+        return destination
+
+    destination.mkdir(parents=True, exist_ok=True)
+    _run(["git", "init", "--quiet"], cwd=destination)
+    _run(["git", "remote", "add", "origin", repo_url], cwd=destination)
+    try:
+        _run(["git", "fetch", "--quiet", "--depth", "1", "origin", ref], cwd=destination)
+        _run(["git", "checkout", "--quiet", "FETCH_HEAD"], cwd=destination)
+    except RuntimeError:
+        shutil.rmtree(destination, ignore_errors=True)
         _run(["git", "clone", "--quiet", repo_url, str(destination)])
         _run(["git", "checkout", "--quiet", ref], cwd=destination)
-    else:
-        _run(
-            ["git", "clone", "--quiet", "--depth", "1", repo_url, str(destination)]
-        )
     return destination
 
 
@@ -89,9 +104,41 @@ def _walk(root: Path) -> list[Path]:
     return files
 
 
-def build_file_tree(root: Path, files: list[Path]) -> str:
-    """Render the repository layout as relative paths, one per line."""
-    return "\n".join(str(path.relative_to(root)) for path in files)
+def _render_tree(root: Path, files: list[Path], depth: int) -> str:
+    """Render paths, collapsing anything below ``depth`` into a per-directory count."""
+    lines: list[str] = []
+    collapsed: dict[str, int] = {}
+    for path in files:
+        relative = path.relative_to(root)
+        if len(relative.parts) <= depth:
+            lines.append(relative.as_posix())
+        else:
+            parent = "/".join(relative.parts[:depth])
+            collapsed[parent] = collapsed.get(parent, 0) + 1
+    lines.extend(f"{parent}/ ({count} more files)" for parent, count in collapsed.items())
+    return "\n".join(sorted(lines))
+
+
+def build_file_tree(
+    root: Path, files: list[Path], max_chars: int = MAX_TREE_CHARS
+) -> str:
+    """Render the repository layout within a character budget.
+
+    The tree competes with the relevant files for the model's attention, and a
+    real repository has enough paths to crowd them out: a shallow clone of
+    Excalidraw renders about 66,000 characters, well over the whole
+    ``MAX_TOTAL_CHARS`` budget for file contents.
+
+    Shallow paths survive intact because they carry the layout that matters —
+    where the app, the routes and the tests live.  Deeper ones collapse to a
+    count, progressively, until the result fits.
+    """
+    tree = ""
+    for depth in range(MAX_TREE_DEPTH, 0, -1):
+        tree = _render_tree(root, files, depth)
+        if len(tree) <= max_chars:
+            return tree
+    return tree[:max_chars] + "\n... truncated ...\n"
 
 
 def _read(path: Path, limit: int = MAX_FILE_CHARS) -> str:
