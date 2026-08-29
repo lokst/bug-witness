@@ -172,23 +172,3 @@ task1_fixture/     The selected bug, and evidence from a live run
 ```bash
 python -m unittest discover -s tests
 ```
-
-The two recordings regenerate from committed tapes with `vhs demo.tape` and
-`vhs demo-live.tape`; the latter replays `demo-live.log` through
-`scripts/replay.sh`.
-
-## What is verified
-
-The loop has run end to end against a live Nosana deployment and a real Daytona
-sandbox, and reproduced the demo bug on the second attempt. The GIF above is
-that run's output.
-
-Reproduction is not yet reliable run to run. The failure mode is selectors: the
-model would write `/login/i` for a button reading "Sign in", and spend an
-attempt discovering it. Both prompts now carry the source files and ask for
-routes and labels quoted from them — a fix that is well understood but not yet
-confirmed over repeated runs.
-
-When the agent cannot reproduce a bug it says so rather than guessing. That is
-the behaviour that matters most here: a false positive — a test that fails for
-the wrong reason, reported as a confirmed bug — would be worse than no answer.
