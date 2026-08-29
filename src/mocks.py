@@ -81,10 +81,10 @@ Running 1 test using 1 worker
     Expected: visible
     Received: element(s) not found
 
-      33 |   await expect(
-    > 34 |     page.getByText('Service temporarily unavailable', { exact: true }),
+      28 |   await expect(
+    > 29 |     page.getByText('Service temporarily unavailable', { exact: true }),
          |     ^
-      35 |   ).toBeVisible();
+      30 |   ).toBeVisible();
 
   1 failed (32.4s)
 """
@@ -137,6 +137,7 @@ def run_in_daytona(
             reproduced=False,
             reason="Test passed, so the reported behaviour did not occur.",
             artifacts=[],
+            stage="test",
         )
 
     return ExecutionResult(
@@ -146,4 +147,5 @@ def run_in_daytona(
         reproduced=True,
         reason="Assertion failed: the API error was never shown to the user",
         artifacts=["test-results/reproduce-failed/test-failed-1.png"],
+        stage="test",
     )

@@ -1,10 +1,11 @@
 {
   "exit_code": 1,
-  "stdout": "Error: expect(locator).toBeVisible() failed\nError: element(s) not found\nat /home/daytona/repo/reproduce.spec.js:32:5",
+  "stdout": "Error: expect(locator).toBeVisible() failed\n\nLocator: getByText('Service temporarily unavailable', { exact: true })\nExpected: visible\nTimeout: 5000ms\nError: element(s) not found\n\nCall log:\n  - Expect \"toBeVisible\" with timeout 5000ms\n  - waiting for getByText('Service temporarily unavailable', { exact: true })\n\nat /home/daytona/repo/reproduce.spec.js:33:5",
   "stderr": "",
   "reproduced": true,
-  "reason": "Playwright assertion failed as expected; bug reproduced",
+  "reason": "Playwright assertion failed as expected (matched: service, temporarily, unavailable, visible); bug reproduced",
   "artifacts": [
     "task1_fixture/known_failure.png"
-  ]
+  ],
+  "stage": "test"
 }

@@ -66,7 +66,7 @@ PLAN = ReproductionPlan(
 
 
 class DaytonaRunnerTests(unittest.TestCase):
-    def test_assertion_failure_is_reproduced_and_artifact_is_downloaded(self):
+    def test_test_stage_result_carries_streams_and_artifacts_unclassified(self):
         stages = {
             "setup": (0, "installed", ""),
             "start": (0, "started", ""),
@@ -85,9 +85,11 @@ class DaytonaRunnerTests(unittest.TestCase):
                 else:
                     os.environ["DAYTONA_ARTIFACT_DIR"] = old
 
-            self.assertTrue(result.reproduced)
+            self.assertEqual(result.stage, "test")
+            self.assertFalse(result.reproduced)
+            self.assertEqual(result.reason, "Playwright test finished with exit code 1")
             self.assertEqual(result.exit_code, 1)
-            self.assertIn("expect(received)", result.stdout)
+            self.assertIn("===== test stdout =====\nError: expect(received)", result.stdout)
             self.assertEqual(len(result.artifacts), 1)
             self.assertEqual(Path(result.artifacts[0]).read_bytes(), b"png")
         client.sandbox.git.clone.assert_called_once_with(
@@ -105,6 +107,7 @@ class DaytonaRunnerTests(unittest.TestCase):
         result = run_in_daytona("https://example.test/repo.git", PLAN, _daytona=client)
 
         self.assertFalse(result.reproduced)
+        self.assertEqual(result.stage, "setup")
         self.assertEqual(result.exit_code, 127)
         self.assertEqual(result.reason, "Dependency setup failed with exit code 127")
         self.assertIn("npm: command not found", result.stderr)
@@ -115,6 +118,22 @@ class DaytonaRunnerTests(unittest.TestCase):
         ]
         self.assertEqual(len(wrapped_commands), 1)
         client.sandbox.delete.assert_called_once()
+
+    def test_result_stage_output_comes_before_earlier_stages(self):
+        client = FakeDaytona(
+            {
+                "setup": (0, "npm output " * 50, "npm warn"),
+                "start": (0, "", ""),
+                "test": (1, "Error: expect(received).toBe(expected)", "test warning"),
+            }
+        )
+        result = run_in_daytona("https://example.test/repo.git", PLAN, _daytona=client)
+
+        # The stage that produced the result is the evidence that matters
+        # most, and downstream consumers truncate, so it must come first.
+        self.assertTrue(result.stdout.startswith("===== test stdout =====\n"))
+        self.assertTrue(result.stderr.startswith("===== test stderr =====\n"))
+        self.assertIn("===== setup stdout =====", result.stdout)
 
     def test_pinned_ref_is_checked_out_from_a_full_clone(self):
         client = FakeDaytona(
@@ -149,6 +168,7 @@ class DaytonaRunnerTests(unittest.TestCase):
         )
 
         self.assertFalse(result.reproduced)
+        self.assertEqual(result.stage, "repository")
         self.assertEqual(result.reason, "Repository checkout failed with exit code 128")
         setups = [
             command
@@ -171,25 +191,13 @@ class DaytonaRunnerTests(unittest.TestCase):
         ]
         self.assertEqual(checkouts, [])
 
-    def test_test_infrastructure_failure_is_not_a_reproduction(self):
-        client = FakeDaytona(
-            {
-                "setup": (0, "", ""),
-                "start": (0, "", ""),
-                "test": (1, "SyntaxError: unexpected token", ""),
-            }
-        )
-        result = run_in_daytona("https://example.test/repo.git", PLAN, _daytona=client)
-
-        self.assertFalse(result.reproduced)
-        self.assertIn("could not complete", result.reason)
-
     def test_rejects_test_path_traversal_without_creating_sandbox(self):
         client = Mock()
         bad_plan = ReproductionPlan("", "", "../escape.spec.ts", "", "")
         result = run_in_daytona("https://example.test/repo.git", bad_plan, _daytona=client)
 
         self.assertEqual(result.exit_code, -1)
+        self.assertEqual(result.stage, "sandbox")
         self.assertEqual(result.reason, "Invalid reproduction plan")
         client.create.assert_not_called()
 

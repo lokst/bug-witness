@@ -35,9 +35,15 @@ Options:
 
 - `--repo` — GitHub repository URL
 - `--issue` — path to a file containing the issue text
+- `--ref` — commit or tag to pin the repository to; used for both context
+  gathering and the sandbox clone (recommended: default branches move)
 - `--max-attempts` — how many reproduction strategies to try (default 3)
 - `--setup-command` — override dependency/setup commands
 - `--start-command` — override the application start command
+
+A run only counts as reproduced when Playwright fails on an assertion whose
+output matches the plan's `expectedFailure`; setup, startup, browser and
+unrelated assertion failures feed the next attempt instead.
 
 Each attempt is written to `outputs/attempt-N/`, containing the generated test,
 the plan, and the captured stdout and stderr.
@@ -52,8 +58,9 @@ the deterministic generator emits the selected YesFundMe reproduction from
 python -m src.main \
   --repo https://github.com/Gauntlet-HQ/yes-build-me.git \
   --issue task1_fixture/issue.txt \
+  --ref 079886d51a871b2c4e43377a1a33e456d93cdd91 \
   --max-attempts 1 \
-  --setup-command "git fetch --depth 1 origin 079886d51a871b2c4e43377a1a33e456d93cdd91 && git checkout 079886d51a871b2c4e43377a1a33e456d93cdd91 && npm ci && npm run seed && npm install --no-save --package-lock=false @playwright/test@1.62.1 && npx playwright install --with-deps chromium" \
+  --setup-command "npm ci && npm run seed && npm install --no-save --package-lock=false @playwright/test@1.62.1 && npx playwright install --with-deps chromium" \
   --start-command "npm run dev"
 ```
 
