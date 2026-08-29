@@ -26,7 +26,9 @@ def save_attempt(
     directory = OUTPUT_DIR / f"attempt-{attempt}"
     directory.mkdir(parents=True, exist_ok=True)
 
-    (directory / plan.test_file_name).write_text(plan.test_code)
+    generated_test = directory / plan.test_file_name
+    generated_test.parent.mkdir(parents=True, exist_ok=True)
+    generated_test.write_text(plan.test_code)
     (directory / "stdout.txt").write_text(result.stdout)
     (directory / "stderr.txt").write_text(result.stderr)
     (directory / "plan.json").write_text(
@@ -69,7 +71,14 @@ def print_summary(
     print(f"Generated test: {directory / plan.test_file_name}")
 
 
-def run(repo: str, issue: str, max_attempts: int, ref: str | None = None) -> bool:
+def run(
+    repo: str,
+    issue: str,
+    max_attempts: int,
+    ref: str | None = None,
+    setup_command: str | None = None,
+    start_command: str | None = None,
+) -> bool:
     """Drive the think, execute, reflect loop. Returns whether it reproduced."""
     print("Gathering repository context")
     context = gather_context(repo, issue=issue, ref=ref)
@@ -86,7 +95,14 @@ def run(repo: str, issue: str, max_attempts: int, ref: str | None = None) -> boo
         print(f"  {plan.summary}")
 
         print(f"Attempt {attempt}/{max_attempts}: running in sandbox")
-        result = classify(run_in_daytona(repo, plan, attempt=attempt))
+        result = classify(
+            run_in_daytona(
+                repo,
+                plan,
+                setup_command=setup_command,
+                start_command=start_command,
+            )
+        )
         print(f"  {result.reason}")
 
         directory = save_attempt(attempt, plan, result)
@@ -116,10 +132,27 @@ def main() -> int:
         "branches move, and a moved branch may no longer contain the bug.",
     )
     parser.add_argument("--max-attempts", type=int, default=3)
+    parser.add_argument(
+        "--setup-command",
+        help="Repository setup command (default: generic npm/Playwright setup)",
+    )
+    parser.add_argument(
+        "--start-command",
+        help="Application start command (default: npm run dev)",
+    )
     args = parser.parse_args()
+    if args.max_attempts < 1:
+        parser.error("--max-attempts must be at least 1")
 
     issue = Path(args.issue).read_text()
-    reproduced = run(args.repo, issue, args.max_attempts, ref=args.ref)
+    reproduced = run(
+        args.repo,
+        issue,
+        args.max_attempts,
+        ref=args.ref,
+        setup_command=args.setup_command,
+        start_command=args.start_command,
+    )
     return 0 if reproduced else 1
 
 
