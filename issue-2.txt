@@ -1,0 +1,9 @@
+Guest donor names are missing from the donation list
+
+Donations made without an account still record the donor's name, and the
+campaign page should display it. On the Help Build a Community Garden campaign
+there is a $25 donation from "Guest Donor" with the message "Great cause!".
+
+The message and the amount both appear, but the donor's name is blank. The
+donation was not marked anonymous, so it should show the name that was given
+with it rather than nothing at all.

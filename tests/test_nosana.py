@@ -1,6 +1,6 @@
 import unittest
 
-from src.nosana import GenerationError, extract_json
+from src.nosana import GenerationError, _read_stream, extract_json
 
 # What a reasoning model actually sends back when it explains itself first:
 # the test in a ```js block, then the plan in a ```json block.
@@ -52,6 +52,28 @@ class ExtractJsonTests(unittest.TestCase):
     def test_malformed_object_is_reported_as_invalid_json(self):
         with self.assertRaisesRegex(GenerationError, "not valid JSON"):
             extract_json('{"testCode": "x",}')
+
+
+class StreamTests(unittest.TestCase):
+    def test_deltas_are_reassembled_in_order(self):
+        stream = [
+            b'data: {"choices":[{"delta":{"content":"{\\"sum"}}]}\n',
+            b"\n",
+            b'data: {"choices":[{"delta":{"content":"mary\\": \\"x\\"}"}}]}\n',
+            b'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}\n',
+            b"data: [DONE]\n",
+        ]
+        self.assertEqual(_read_stream(stream), '{"summary": "x"}')
+
+    def test_unparseable_lines_are_skipped(self):
+        # A proxy can inject keep-alive comments between events.
+        stream = [
+            b": ping\n",
+            b"data: not json\n",
+            b'data: {"choices":[{"delta":{"content":"ok"}}]}\n',
+            b"data: [DONE]\n",
+        ]
+        self.assertEqual(_read_stream(stream), "ok")
 
 
 if __name__ == "__main__":

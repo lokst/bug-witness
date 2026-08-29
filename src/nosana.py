@@ -9,12 +9,14 @@ comes from the environment rather than the source, because deployment URLs are
 disposable and this repository may become public.
 """
 
+import http.client
 import json
 import os
 import re
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 from .models import ExecutionResult, ReproductionPlan, RepositoryContext
 
@@ -163,14 +165,39 @@ def _plan_from(payload: dict) -> ReproductionPlan:
     )
 
 
+def _read_stream(response: Any) -> str:
+    """Reassemble a server-sent event stream into the reply text."""
+    parts: list[str] = []
+    for raw in response:
+        line = raw.decode("utf-8", errors="replace").strip()
+        if not line.startswith("data:"):
+            continue
+        payload = line[5:].strip()
+        if payload == "[DONE]":
+            break
+        try:
+            chunk = json.loads(payload)
+        except json.JSONDecodeError:
+            continue
+        delta = chunk.get("choices", [{}])[0].get("delta", {})
+        parts.append(delta.get("content") or "")
+    return "".join(parts)
+
+
 def _complete(prompt: str, timeout: int = DEFAULT_TIMEOUT) -> str:
-    """Send one chat completion request and return the reply text."""
+    """Send one chat completion request and return the reply text.
+
+    The response is streamed. Nosana fronts a deployment with a proxy that
+    times out an idle connection well before a long generation finishes, and a
+    reasoning model on a large prompt is silent for minutes if it answers in
+    one piece.
+    """
     body = json.dumps(
         {
             "model": os.environ.get("NOSANA_MODEL", DEFAULT_MODEL),
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0.2,
-            "stream": False,
+            "stream": True,
         }
     ).encode()
 
@@ -182,18 +209,20 @@ def _complete(prompt: str, timeout: int = DEFAULT_TIMEOUT) -> str:
     request = urllib.request.Request(_endpoint(), data=body, headers=headers)
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response:
-            payload = json.loads(response.read())
+            reply = _read_stream(response)
     except urllib.error.HTTPError as exc:
         raise GenerationError(
             f"Nosana returned {exc.code}: {exc.read().decode(errors='replace')[:400]}"
         ) from exc
-    except (urllib.error.URLError, TimeoutError) as exc:
+    except (urllib.error.URLError, http.client.HTTPException, OSError) as exc:
+        # A proxy that drops a long generation surfaces as RemoteDisconnected
+        # or a reset socket rather than a URLError, and neither should escape
+        # as a traceback when the run could still spend another attempt.
         raise GenerationError(f"Could not reach Nosana: {exc}") from exc
 
-    try:
-        return payload["choices"][0]["message"]["content"]
-    except (KeyError, IndexError) as exc:
-        raise GenerationError(f"Unexpected response shape: {payload}") from exc
+    if not reply.strip():
+        raise GenerationError("Nosana returned an empty reply")
+    return reply
 
 
 def generate_reproduction_test(
