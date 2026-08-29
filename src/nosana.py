@@ -1,36 +1,46 @@
 """Reproduction test generation and refinement.
 
-Task 3. The model reads the issue, the repository context and the evidence
-from previous attempts, and returns a Playwright reproduction hypothesis.
-
-Mocked for now so the orchestrator loop can be built and demoed end to end.
+Task 3's Nosana call is still represented by a deterministic generator.  The
+fallback targets the selected YesFundMe demo, allowing the complete
+orchestrator and Daytona integration to be demonstrated while model-provider
+selection is finalized.
 """
 
 from .models import ExecutionResult, ReproductionPlan, RepositoryContext
 
-FIRST_ATTEMPT_TEST = """\
-import { test, expect } from '@playwright/test';
+DEMO_TEST = """\
+const { test, expect } = require('@playwright/test');
 
-test('changing a user role persists after reload', async ({ page }) => {
-  await page.goto('/users');
-  await page.getByRole('link', { name: 'Ada Lovelace' }).click();
-  await page.getByLabel('Role').selectOption('Editor');
-  await page.getByRole('button', { name: 'Save' }).click();
-  await page.reload();
-  await expect(page.getByTestId('user-role')).toHaveText('Editor');
-});
-"""
+test('shows the API error when campaign creation fails', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('Username or Email').fill('testuser');
+  await page.getByLabel('Password').fill('password123');
+  await page.getByRole('button', { name: 'Sign in' }).click();
+  await expect(page).toHaveURL(/\\/dashboard$/);
 
-REFINED_TEST = """\
-import { test, expect } from '@playwright/test';
+  await page.route('**/api/campaigns', async (route) => {
+    if (route.request().method() === 'POST') {
+      await route.fulfill({
+        status: 503,
+        contentType: 'application/json',
+        body: JSON.stringify({ error: 'Service temporarily unavailable' }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
 
-test('changing a user role persists in the users list', async ({ page }) => {
-  await page.goto('/users');
-  await page.getByRole('link', { name: 'Ada Lovelace' }).click();
-  await page.getByLabel('Role').selectOption('Editor');
-  await page.getByRole('button', { name: 'Save' }).click();
-  await page.getByRole('link', { name: 'Back to users' }).click();
-  await expect(page.getByTestId('user-row-ada').getByTestId('role')).toHaveText('Editor');
+  await page.goto('/campaigns/new');
+  await page.getByLabel('Campaign Title').fill('Playwright campaign');
+  await page
+    .getByLabel('Description')
+    .fill('A sufficiently long campaign description for reproduction.');
+  await page.getByLabel('Goal Amount ($)').fill('100');
+  await page.getByRole('button', { name: 'Create Campaign' }).click();
+
+  await expect(
+    page.getByText('Service temporarily unavailable', { exact: true }),
+  ).toBeVisible();
 });
 """
 
@@ -40,24 +50,26 @@ def generate_reproduction_test(
     context: RepositoryContext,
     previous_results: list[ExecutionResult],
 ) -> ReproductionPlan:
-    """Generate a reproduction plan, refining it against previous evidence."""
-    if not previous_results:
-        return ReproductionPlan(
-            summary="Verify the saved role survives a full page reload.",
-            setup_notes="Start the app and seed at least one user.",
-            test_file_name="reproduce.spec.ts",
-            test_code=FIRST_ATTEMPT_TEST,
-            expected_failure="Role shows Viewer after saving Editor.",
+    """Return the deterministic selected-demo plan until Nosana is enabled."""
+    refinement = ""
+    if previous_results:
+        refinement = (
+            " Refined after the prior sandbox evidence by keeping API failure "
+            "interception scoped to only the campaign-creation POST."
         )
-
     return ReproductionPlan(
         summary=(
-            "A full reload re-fetches the user, so it hides the bug. "
-            "Navigate back to the users list instead, which reads from "
-            "cached list state."
+            "Submit a valid campaign while deterministically returning HTTP 503 "
+            "and assert that the API error is visible." + refinement
         ),
-        setup_notes="Start the app and seed at least one user.",
-        test_file_name="reproduce.spec.ts",
-        test_code=REFINED_TEST,
-        expected_failure="Users list still shows Viewer after saving Editor.",
+        setup_notes=(
+            "Use pinned YesFundMe revision 079886d51a871b2c4e43377a1a33e456d93cdd91; "
+            "run the database seed before starting the app."
+        ),
+        test_file_name="reproduce.spec.js",
+        test_code=DEMO_TEST,
+        expected_failure=(
+            "Service temporarily unavailable should be visible, but the element "
+            "is not rendered."
+        ),
     )

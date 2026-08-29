@@ -1,0 +1,12 @@
+Attempt 1/1: generating reproduction test
+  Submit a valid campaign while deterministically returning HTTP 503 and assert that the API error is visible.
+Attempt 1/1: running in sandbox
+  Playwright assertion failed as expected; bug reproduced
+
+BUG REPRODUCED
+Attempt: 1/1
+
+Expected: Service temporarily unavailable should be visible, but the element is not rendered.
+Observed: Playwright assertion failed as expected; bug reproduced
+
+Generated test: outputs/attempt-1/reproduce.spec.js
