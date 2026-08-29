@@ -1,4 +1,4 @@
-# Bug Reproduction Agent
+# 🔍 Bug Witness 🐛
 
 **Turns a natural-language bug report into a deterministic failing test.**
 
