@@ -49,7 +49,7 @@ evidence for the next attempt.
 
 ## A run
 
-![The agent failing to reproduce a bug, revising its hypothesis from the execution evidence, and reproducing it on the second attempt](demo-live.gif)
+![The same loop running against canned responses](demo.gif)
 
 Verbatim output of a run against a live Nosana deployment and a Daytona
 sandbox. Only the pacing is compressed — a real run takes about twenty minutes,
@@ -150,8 +150,6 @@ downloading a browser inside the sandbox.
 `--mock` runs the same loop against canned responses — useful for seeing the
 shape of it, or demoing without network access. `task1_fixture/` also preserves
 the logs, screenshot and classified result of a successful live Daytona run.
-
-![The same loop running against canned responses](demo.gif)
 
 ## Layout
 
