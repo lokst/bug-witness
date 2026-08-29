@@ -69,9 +69,11 @@ def print_summary(
     print(f"Generated test: {directory / plan.test_file_name}")
 
 
-def run(repo: str, issue: str, max_attempts: int) -> bool:
+def run(repo: str, issue: str, max_attempts: int, ref: str | None = None) -> bool:
     """Drive the think, execute, reflect loop. Returns whether it reproduced."""
-    context = gather_context(repo)
+    print("Gathering repository context")
+    context = gather_context(repo, issue=issue, ref=ref)
+    print(f"  {len(context.relevant_files)} relevant files selected")
     previous_results: list[ExecutionResult] = []
 
     plan = None
@@ -107,11 +109,17 @@ def main() -> int:
     parser.add_argument(
         "--issue", required=True, help="Path to a file containing the issue text"
     )
+    parser.add_argument(
+        "--ref",
+        default=None,
+        help="Commit or tag to pin the repository to. Recommended: default "
+        "branches move, and a moved branch may no longer contain the bug.",
+    )
     parser.add_argument("--max-attempts", type=int, default=3)
     args = parser.parse_args()
 
     issue = Path(args.issue).read_text()
-    reproduced = run(args.repo, issue, args.max_attempts)
+    reproduced = run(args.repo, issue, args.max_attempts, ref=args.ref)
     return 0 if reproduced else 1
 
 

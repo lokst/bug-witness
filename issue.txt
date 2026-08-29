@@ -1,0 +1,7 @@
+Campaign creation failures are not shown to the user
+
+After a signed-in user completes the Create a Campaign form, if POST /api/campaigns
+fails, the page should remain on the form and show the error message returned by the
+API. Instead, it remains on the form with no visible feedback. The error is only
+written to the browser console, so the user cannot tell whether submission failed or
+is still in progress.
