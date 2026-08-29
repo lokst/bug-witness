@@ -40,13 +40,16 @@ Options:
 - `--start-command` — override the application start command
 
 Each attempt is written to `outputs/attempt-N/`, containing the generated test,
-the plan, and the captured stdout and stderr.
+the plan, captured stdout and stderr, and `attempt.json`, which pairs the full
+generated plan with the classified execution result and artifact paths. Failed
+attempts are passed back as evidence before the next strategy is generated.
 
 ## Selected demo
 
 The Daytona execution layer is live. Until the Nosana provider is finalized,
 the deterministic generator emits the selected YesFundMe reproduction from
-`TASK1_DEMO.md`.
+`TASK1_DEMO.md`. Its retry path is evidence-aware and materially changes the
+second Playwright strategy, but it does not yet call a live Nosana transport.
 
 ```bash
 python -m src.main \

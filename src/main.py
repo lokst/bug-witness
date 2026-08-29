@@ -6,12 +6,13 @@ and retry with the evidence until the bug is reproduced or attempts run out.
 
 import argparse
 import json
+from dataclasses import asdict
 from pathlib import Path
 
 from .classifier import classify
 from .context import gather_context
 from .daytona import run_in_daytona
-from .models import ExecutionResult, ReproductionPlan
+from .models import AttemptEvidence, ExecutionResult, ReproductionPlan
 from .nosana import generate_reproduction_test
 
 OUTPUT_DIR = Path("outputs")
@@ -41,6 +42,9 @@ def save_attempt(
             },
             indent=2,
         )
+    )
+    (directory / "attempt.json").write_text(
+        json.dumps(asdict(AttemptEvidence(attempt, plan, result)), indent=2)
     )
     return directory
 
@@ -80,7 +84,7 @@ def run(
 ) -> bool:
     """Drive the think, execute, reflect loop. Returns whether it reproduced."""
     context = gather_context(repo)
-    previous_results: list[ExecutionResult] = []
+    previous_attempts: list[AttemptEvidence] = []
 
     plan = None
     result = None
@@ -88,7 +92,7 @@ def run(
 
     for attempt in range(1, max_attempts + 1):
         print(f"Attempt {attempt}/{max_attempts}: generating reproduction test")
-        plan = generate_reproduction_test(issue, context, previous_results)
+        plan = generate_reproduction_test(issue, context, previous_attempts)
         print(f"  {plan.summary}")
 
         print(f"Attempt {attempt}/{max_attempts}: running in sandbox")
@@ -103,12 +107,11 @@ def run(
         print(f"  {result.reason}")
 
         directory = save_attempt(attempt, plan, result)
+        previous_attempts.append(AttemptEvidence(attempt, plan, result))
 
         if result.reproduced:
             print_summary(True, attempt, max_attempts, plan, result, directory)
             return True
-
-        previous_results.append(result)
 
     print_summary(False, max_attempts, max_attempts, plan, result, directory)
     return False

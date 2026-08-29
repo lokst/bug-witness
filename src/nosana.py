@@ -6,7 +6,7 @@ orchestrator and Daytona integration to be demonstrated while model-provider
 selection is finalized.
 """
 
-from .models import ExecutionResult, ReproductionPlan, RepositoryContext
+from .models import AttemptEvidence, ReproductionPlan, RepositoryContext
 
 DEMO_TEST = """\
 const { test, expect } = require('@playwright/test');
@@ -44,19 +44,56 @@ test('shows the API error when campaign creation fails', async ({ page }) => {
 });
 """
 
+REFINED_DEMO_TEST = """\
+const { test, expect } = require('@playwright/test');
+
+test('shows the campaign API error using a request-scoped response', async ({ page }) => {
+  await page.goto('/login');
+  await page.getByLabel('Username or Email').fill('testuser');
+  await page.getByLabel('Password').fill('password123');
+  await Promise.all([
+    page.waitForURL(/\\/dashboard$/),
+    page.getByRole('button', { name: 'Sign in' }).click(),
+  ]);
+
+  await page.goto('/campaigns/new');
+  await page.getByLabel('Campaign Title').fill('Playwright campaign');
+  await page.getByLabel('Description').fill('A sufficiently long campaign description for reproduction.');
+  await page.getByLabel('Goal Amount ($)').fill('100');
+
+  const failedRequest = page.waitForResponse(
+    response => response.url().includes('/api/campaigns') &&
+      response.request().method() === 'POST' && response.status() === 503,
+  );
+  await page.route('**/api/campaigns', route => route.fulfill({
+    status: 503,
+    contentType: 'application/json',
+    body: JSON.stringify({ error: 'Service temporarily unavailable' }),
+  }), { times: 1 });
+  await page.getByRole('button', { name: 'Create Campaign' }).click();
+  await failedRequest;
+
+  await expect(page.getByText('Service temporarily unavailable', { exact: true })).toBeVisible();
+});
+"""
+
 
 def generate_reproduction_test(
     issue: str,
     context: RepositoryContext,
-    previous_results: list[ExecutionResult],
+    previous_attempts: list[AttemptEvidence],
 ) -> ReproductionPlan:
-    """Return the deterministic selected-demo plan until Nosana is enabled."""
+    """Return a deterministic evidence-aware plan until Nosana is enabled."""
     refinement = ""
-    if previous_results:
+    test_code = DEMO_TEST
+    if previous_attempts:
+        previous = previous_attempts[-1]
         refinement = (
-            " Refined after the prior sandbox evidence by keeping API failure "
-            "interception scoped to only the campaign-creation POST."
+            " Refined from the prior generated test and sandbox evidence "
+            f"({previous.result.reason}); wait for login navigation and the failed "
+            "campaign response, and intercept exactly one request."
         )
+        test_code = REFINED_DEMO_TEST
     return ReproductionPlan(
         summary=(
             "Submit a valid campaign while deterministically returning HTTP 503 "
@@ -67,7 +104,7 @@ def generate_reproduction_test(
             "run the database seed before starting the app."
         ),
         test_file_name="reproduce.spec.js",
-        test_code=DEMO_TEST,
+        test_code=test_code,
         expected_failure=(
             "Service temporarily unavailable should be visible, but the element "
             "is not rendered."

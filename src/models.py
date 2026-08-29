@@ -4,7 +4,8 @@ Both the Nosana (reasoning) and Daytona (execution) sides code against these,
 so they can be developed in parallel.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
+from typing import Any
 
 
 @dataclass
@@ -38,3 +39,19 @@ class ExecutionResult:
     reproduced: bool = False
     reason: str = ""
     artifacts: list[str] = field(default_factory=list)
+
+
+@dataclass
+class AttemptEvidence:
+    """A generated strategy paired with everything learned by executing it."""
+
+    attempt: int
+    plan: ReproductionPlan
+    result: ExecutionResult
+    artifact_notes: list[str] = field(default_factory=list)
+
+    def as_prompt_data(self) -> dict[str, Any]:
+        """Return JSON-ready evidence for a subsequent refinement request."""
+        data = asdict(self)
+        data["artifactNotes"] = self.artifact_notes or self.result.artifacts
+        return data
