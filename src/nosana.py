@@ -30,6 +30,10 @@ DEFAULT_TIMEOUT = 600
 # repository context.
 MAX_EVIDENCE_CHARS = 3000
 
+# A fenced block and its language tag. The tag is captured rather than skipped
+# so a ```json block can be preferred over a ```js one.
+_FENCE = re.compile(r"```([A-Za-z0-9_+-]*)[ \t]*\r?\n?(.*?)```", re.DOTALL)
+
 
 class GenerationError(RuntimeError):
     """Raised when the model could not be reached or its reply was unusable."""
@@ -91,6 +95,23 @@ def _strip_reasoning(text: str) -> str:
     return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
 
 
+def _candidates(cleaned: str) -> list[str]:
+    """Payloads that might hold the plan, most promising first.
+
+    A reply often carries more than one fenced block -- typically the test
+    code first and the JSON plan second -- so every fence is a candidate,
+    those labelled ``json`` ahead of the rest. The whole reply stays a
+    candidate too: narrowing to a fence must never discard an object that
+    sits outside it.
+    """
+    labelled: list[str] = []
+    unlabelled: list[str] = []
+    for match in _FENCE.finditer(cleaned):
+        target = labelled if match.group(1).lower() == "json" else unlabelled
+        target.append(match.group(2).strip())
+    return [*labelled, *unlabelled, cleaned]
+
+
 def extract_json(text: str) -> dict:
     """Pull a JSON object out of a model reply.
 
@@ -100,24 +121,30 @@ def extract_json(text: str) -> dict:
     """
     cleaned = _strip_reasoning(text)
 
-    fenced = re.search(r"```(?:json)?\s*(.*?)```", cleaned, flags=re.DOTALL)
-    if fenced:
-        cleaned = fenced.group(1).strip()
-
-    try:
-        return json.loads(cleaned)
-    except json.JSONDecodeError:
-        pass
-
-    # Fall back to the outermost braces, which survives trailing commentary.
-    start = cleaned.find("{")
-    end = cleaned.rfind("}")
-    if start != -1 and end > start:
+    saw_object = False
+    failure: json.JSONDecodeError | None = None
+    for candidate in _candidates(cleaned):
+        if not candidate:
+            continue
         try:
-            return json.loads(cleaned[start : end + 1])
-        except json.JSONDecodeError as exc:
-            raise GenerationError(f"Model reply was not valid JSON: {exc}") from exc
+            return json.loads(candidate)
+        except json.JSONDecodeError:
+            pass
 
+        # Fall back to the outermost braces, which survives trailing commentary.
+        start = candidate.find("{")
+        end = candidate.rfind("}")
+        if start == -1 or end <= start:
+            continue
+        saw_object = True
+        try:
+            return json.loads(candidate[start : end + 1])
+        except json.JSONDecodeError as exc:
+            # Keep looking: a later candidate may hold the real object.
+            failure = exc
+
+    if saw_object:
+        raise GenerationError(f"Model reply was not valid JSON: {failure}")
     raise GenerationError("Model reply contained no JSON object")
 
 

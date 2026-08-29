@@ -18,6 +18,9 @@ README:
 File tree:
 {file_tree}
 
+Relevant files:
+{relevant_files}
+
 ## Requirements
 
 - Use `@playwright/test`.

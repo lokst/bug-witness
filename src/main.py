@@ -12,7 +12,7 @@ from .classifier import classify
 from .context import gather_context
 from .daytona import run_in_daytona
 from .models import ExecutionResult, ReproductionPlan
-from .nosana import generate_reproduction_test
+from .nosana import GenerationError, generate_reproduction_test
 
 OUTPUT_DIR = Path("outputs")
 
@@ -63,11 +63,15 @@ def print_summary(
     reproduced: bool,
     attempt: int,
     max_attempts: int,
-    plan: ReproductionPlan,
-    result: ExecutionResult,
+    plan: ReproductionPlan | None,
+    result: ExecutionResult | None,
     directory: Path,
 ) -> None:
-    """Print a summary a judge can read without digging through logs."""
+    """Print a summary a judge can read without digging through logs.
+
+    ``plan`` and ``result`` are absent when every attempt failed to produce a
+    usable test, so there is nothing to point at.
+    """
     print()
     if reproduced:
         print("BUG REPRODUCED")
@@ -79,10 +83,12 @@ def print_summary(
         print("UNABLE TO REPRODUCE")
         print(f"{max_attempts} reproduction strategies attempted.")
         print()
-        print(f"Last attempt: {result.reason}")
+        reason = result.reason if result else "no usable reproduction test was generated"
+        print(f"Last attempt: {reason}")
 
     print()
-    print(f"Generated test: {directory / plan.test_file_name}")
+    if plan is not None:
+        print(f"Generated test: {directory / plan.test_file_name}")
 
 
 def run(
@@ -117,7 +123,21 @@ def run(
 
     for attempt in range(1, max_attempts + 1):
         print(f"Attempt {attempt}/{max_attempts}: generating reproduction test")
-        plan = generate(issue, context, previous_results)
+        try:
+            plan = generate(issue, context, previous_results)
+        except GenerationError as exc:
+            # An unusable reply costs this attempt, not the whole run. Recording
+            # it as evidence also tells the next attempt what went wrong.
+            print(f"  Generation failed: {exc}")
+            result = ExecutionResult(
+                exit_code=-1,
+                stdout="",
+                stderr=str(exc),
+                reason=f"The model's reply could not be used: {exc}",
+                stage="generation",
+            )
+            previous_results.append(result)
+            continue
         print(f"  {plan.summary}")
 
         print(f"Attempt {attempt}/{max_attempts}: running in sandbox")

@@ -7,6 +7,7 @@ from unittest.mock import patch
 
 from src import main
 from src.models import ExecutionResult, ReproductionPlan, RepositoryContext
+from src.nosana import GenerationError
 
 
 class OrchestratorIntegrationTests(unittest.TestCase):
@@ -47,6 +48,37 @@ class OrchestratorIntegrationTests(unittest.TestCase):
                 (Path(temp) / "attempt-1/nested/reproduce.spec.js").read_text(),
                 "test()",
             )
+
+    def test_generation_failure_costs_one_attempt_not_the_whole_run(self):
+        """An unusable model reply must not abort the remaining attempts."""
+        plan = ReproductionPlan("demo", "", "reproduce.spec.js", "test()", "boom")
+        execution = ExecutionResult(1, "Error: expect(received).toBe(expected)\nboom", "", stage="test")
+
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            main, "OUTPUT_DIR", Path(temp)
+        ), patch.object(main, "gather_context", return_value=RepositoryContext()), patch.object(
+            main,
+            "generate_reproduction_test",
+            side_effect=[GenerationError("Model reply contained no JSON object"), plan],
+        ) as generate, patch.object(main, "run_in_daytona", return_value=execution):
+            reproduced = main.run("https://example.test/repo.git", "issue", 2)
+
+            self.assertTrue(reproduced)
+            self.assertEqual(generate.call_count, 2)
+            # The failure is handed to the next attempt as evidence.
+            evidence = generate.call_args_list[1].args[2]
+            self.assertEqual(len(evidence), 1)
+            self.assertEqual(evidence[0].stage, "generation")
+            self.assertIn("could not be used", evidence[0].reason)
+
+    def test_run_reports_cleanly_when_no_attempt_produces_a_test(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(
+            main, "OUTPUT_DIR", Path(temp)
+        ), patch.object(main, "gather_context", return_value=RepositoryContext()), patch.object(
+            main, "generate_reproduction_test", side_effect=GenerationError("no JSON")
+        ), patch.object(main, "run_in_daytona") as execute:
+            self.assertFalse(main.run("https://example.test/repo.git", "issue", 2))
+            execute.assert_not_called()
 
     @unittest.skipUnless(importlib.util.find_spec("dotenv"), "python-dotenv not installed")
     def test_load_environment_reads_project_dotenv_without_overriding_process(self):
