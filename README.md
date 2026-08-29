@@ -153,8 +153,6 @@ the logs, screenshot and classified result of a successful live Daytona run.
 
 ![The same loop running against canned responses](demo.gif)
 
-![The same loop running against canned responses](demo.gif)
-
 ## Layout
 
 ```text
