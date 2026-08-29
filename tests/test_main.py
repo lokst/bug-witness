@@ -9,8 +9,16 @@ from src.models import ExecutionResult, ReproductionPlan, RepositoryContext
 
 class OrchestratorIntegrationTests(unittest.TestCase):
     def test_passes_commands_to_daytona_and_saves_attempt(self):
-        plan = ReproductionPlan("demo", "", "nested/reproduce.spec.js", "test()", "failure")
-        execution = ExecutionResult(1, "assertion", "", True, "bug reproduced", ["shot.png"])
+        plan = ReproductionPlan(
+            "demo", "", "nested/reproduce.spec.js", "test()", "expected Editor, received Viewer"
+        )
+        execution = ExecutionResult(
+            1,
+            'Error: expect(received).toBe(expected)\nExpected: "Editor"\nReceived: "Viewer"',
+            "",
+            artifacts=["shot.png"],
+            stage="test",
+        )
         with tempfile.TemporaryDirectory() as temp, patch.object(
             main, "OUTPUT_DIR", Path(temp)
         ), patch.object(main, "gather_context", return_value=RepositoryContext()), patch.object(

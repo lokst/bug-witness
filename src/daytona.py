@@ -47,6 +47,7 @@ except ImportError:  # pragma: no cover - exercised only before shared models la
         reproduced: bool = False
         reason: str = ""
         artifacts: list[str] = field(default_factory=list)
+        stage: str = ""
 
 
 _REPO_DIR = "/home/daytona/repo"
@@ -67,27 +68,6 @@ module.exports = defineConfig({
   reporter: [['line']],
 });
 """
-_ASSERTION_MARKERS = (
-    "assertionerror",
-    "expect(received)",
-    "expect(locator)",
-    "expected:",
-    "received:",
-    "to equal",
-    "to be",
-)
-_INFRASTRUCTURE_MARKERS = (
-    "syntaxerror",
-    "cannot find module",
-    "no tests found",
-    "browser has been closed",
-    "executable doesn't exist",
-    "error: page.goto: net::",
-    "error: page.goto: timeout",
-    "test timeout of",
-)
-
-
 @dataclass
 class _StageResult:
     exit_code: int
@@ -155,36 +135,39 @@ def _run_stage(
 
 
 def _result(
+    label: str,
     stage: str,
     result: _StageResult,
     logs: list[tuple[str, _StageResult]],
     artifacts: list[str] | None = None,
 ) -> ExecutionResult:
+    """Combine every stage's streams into the evidence returned to the model.
+
+    ``stage`` records how far the pipeline got so the classifier can tell a
+    dependency or startup failure from a Playwright outcome.  Reproduction is
+    never decided here.
+    """
+    # The stage that produced this result leads: it is the evidence that
+    # matters most, and downstream consumers (the model prompt in particular)
+    # truncate long output from the end.
+    ordered = [entry for entry in logs if entry[0] == stage] + [
+        entry for entry in logs if entry[0] != stage
+    ]
     stdout = "\n".join(
-        f"===== {name} stdout =====\n{item.stdout}" for name, item in logs if item.stdout
+        f"===== {name} stdout =====\n{item.stdout}" for name, item in ordered if item.stdout
     )
     stderr = "\n".join(
-        f"===== {name} stderr =====\n{item.stderr}" for name, item in logs if item.stderr
+        f"===== {name} stderr =====\n{item.stderr}" for name, item in ordered if item.stderr
     )
     return ExecutionResult(
         exit_code=result.exit_code,
         stdout=stdout,
         stderr=stderr,
         reproduced=False,
-        reason=f"{stage} failed with exit code {result.exit_code}",
+        reason=f"{label} with exit code {result.exit_code}",
         artifacts=artifacts or [],
+        stage=stage,
     )
-
-
-def _classify_test(result: _StageResult) -> tuple[bool, str]:
-    if result.exit_code == 0:
-        return False, "Playwright passed; the reported bug was not reproduced"
-    output = f"{result.stdout}\n{result.stderr}".lower()
-    if any(marker in output for marker in _INFRASTRUCTURE_MARKERS):
-        return False, "Playwright could not complete due to a test or browser failure"
-    if any(marker in output for marker in _ASSERTION_MARKERS):
-        return True, "Playwright assertion failed as expected; bug reproduced"
-    return False, "Playwright failed, but no assertion failure proved the reported bug"
 
 
 def _download_artifacts(sandbox: Any, local_dir: Path) -> list[str]:
@@ -223,18 +206,22 @@ def run_in_daytona(
 ) -> ExecutionResult:
     """Clone and execute a Playwright reproduction in a fresh Daytona sandbox.
 
+    ``ref`` pins the clone to a commit, tag, or branch so the sandbox tests the
+    same revision the repository context was gathered from.  A pinned clone
+    needs full history, since a shallow clone only fetches the default tip.
+
     ``_daytona`` is a private dependency-injection seam used by focused tests.
     Production callers should omit it.  Every normal return is an
     :class:`ExecutionResult`; SDK, clone, setup, start, and test failures are
     converted into structured results rather than escaping the orchestrator.
     """
     if not repo_url or not repo_url.strip():
-        return ExecutionResult(-1, "", "Repository URL is required", False, "Sandbox setup failed", [])
+        return ExecutionResult(-1, "", "Repository URL is required", False, "Sandbox setup failed", [], stage="sandbox")
 
     try:
         test_path = _safe_test_path(plan.test_file_name)
     except (AttributeError, ValueError) as exc:
-        return ExecutionResult(-1, "", str(exc), False, "Invalid reproduction plan", [])
+        return ExecutionResult(-1, "", str(exc), False, "Invalid reproduction plan", [], stage="sandbox")
 
     if _daytona is None:
         try:
@@ -254,6 +241,7 @@ def run_in_daytona(
                 False,
                 "Sandbox setup failed",
                 [],
+                stage="sandbox",
             )
         except Exception as exc:
             return ExecutionResult(
@@ -263,6 +251,7 @@ def run_in_daytona(
                 False,
                 "Sandbox setup failed",
                 [],
+                stage="sandbox",
             )
 
     sandbox = None
@@ -277,7 +266,7 @@ def run_in_daytona(
             else:
                 sandbox.git.clone(repo_url.strip(), _REPO_DIR, depth=1)
         except Exception as exc:
-            return ExecutionResult(-1, "", f"Could not create sandbox or clone repository: {exc}", False, "Repository setup failed", [])
+            return ExecutionResult(-1, "", f"Could not create sandbox or clone repository: {exc}", False, "Repository setup failed", [], stage="repository")
 
         if ref:
             checkout = _run_stage(
@@ -285,7 +274,7 @@ def run_in_daytona(
             )
             logs.append(("checkout", checkout))
             if checkout.exit_code:
-                return _result("Repository checkout", checkout, logs)
+                return _result("Repository checkout failed", "repository", checkout, logs)
 
         try:
             remote_test_path = posixpath.join(_REPO_DIR, test_path)
@@ -299,12 +288,12 @@ def run_in_daytona(
                 posixpath.join(_REPO_DIR, ".repro-agent.playwright.config.cjs"),
             )
         except Exception as exc:
-            return ExecutionResult(-1, "", f"Could not write generated test: {exc}", False, "Repository setup failed", [])
+            return ExecutionResult(-1, "", f"Could not write generated test: {exc}", False, "Repository setup failed", [], stage="repository")
 
         setup = _run_stage(sandbox, "setup", setup_command or _DEFAULT_SETUP, timeout=1200)
         logs.append(("setup", setup))
         if setup.exit_code:
-            return _result("Dependency setup", setup, logs)
+            return _result("Dependency setup failed", "setup", setup, logs)
 
         if start_command != "":
             app_command = start_command or _DEFAULT_START
@@ -321,7 +310,7 @@ def run_in_daytona(
                     start.stderr += "\n" + _read_remote(sandbox, posixpath.join(_REPO_DIR, ".repro-agent/app.stderr"))
                 except Exception:
                     pass
-                return _result("Application start", start, logs)
+                return _result("Application start failed", "start", start, logs)
 
         test_command = (
             f"npx playwright test {shlex.quote(test_path)} "
@@ -342,13 +331,10 @@ def run_in_daytona(
         artifact_root = os.environ.get("DAYTONA_ARTIFACT_DIR")
         local_dir = Path(artifact_root) if artifact_root else Path(tempfile.mkdtemp(prefix="repro-agent-"))
         artifacts = _download_artifacts(sandbox, local_dir)
-        reproduced, reason = _classify_test(test)
-        completed = _result("Playwright test", test, logs, artifacts)
-        completed.reproduced = reproduced
-        completed.reason = reason
-        return completed
+        # Whether this exit code is a reproduction is decided by classifier.classify.
+        return _result("Playwright test finished", "test", test, logs, artifacts)
     except Exception as exc:
-        return ExecutionResult(-1, "", f"Daytona execution failed: {exc}", False, "Sandbox execution failed", [])
+        return ExecutionResult(-1, "", f"Daytona execution failed: {exc}", False, "Sandbox execution failed", [], stage="sandbox")
     finally:
         if sandbox is not None:
             try:

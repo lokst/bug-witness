@@ -114,7 +114,8 @@ def run(
                 setup_command=setup_command,
                 start_command=start_command,
                 ref=ref,
-            )
+            ),
+            plan,
         )
         print(f"  {result.reason}")
 

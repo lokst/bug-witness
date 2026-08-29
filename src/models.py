@@ -38,3 +38,6 @@ class ExecutionResult:
     reproduced: bool = False
     reason: str = ""
     artifacts: list[str] = field(default_factory=list)
+    # Pipeline stage the run reached: "sandbox", "repository", "setup",
+    # "start" or "test". Only a "test" result can be classified as reproduced.
+    stage: str = ""
