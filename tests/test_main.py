@@ -1,3 +1,5 @@
+import importlib.util
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -45,6 +47,21 @@ class OrchestratorIntegrationTests(unittest.TestCase):
                 (Path(temp) / "attempt-1/nested/reproduce.spec.js").read_text(),
                 "test()",
             )
+
+    @unittest.skipUnless(importlib.util.find_spec("dotenv"), "python-dotenv not installed")
+    def test_load_environment_reads_project_dotenv_without_overriding_process(self):
+        with tempfile.TemporaryDirectory() as temp:
+            (Path(temp) / ".env").write_text("REPRO_TEST_A=from-file\nREPRO_TEST_B=from-file\n")
+            os.environ["REPRO_TEST_B"] = "from-process"
+            os.environ.pop("REPRO_TEST_A", None)
+            try:
+                main.load_environment(Path(temp))
+
+                self.assertEqual(os.environ.get("REPRO_TEST_A"), "from-file")
+                self.assertEqual(os.environ.get("REPRO_TEST_B"), "from-process")
+            finally:
+                os.environ.pop("REPRO_TEST_A", None)
+                os.environ.pop("REPRO_TEST_B", None)
 
 
 if __name__ == "__main__":

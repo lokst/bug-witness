@@ -17,6 +17,20 @@ from .nosana import generate_reproduction_test
 OUTPUT_DIR = Path("outputs")
 
 
+def load_environment(root: Path | None = None) -> None:
+    """Load a project-root ``.env`` before any provider reads ``os.environ``.
+
+    Both Nosana and Daytona are configured through environment variables, so
+    this has to happen once at start-up rather than lazily inside a provider.
+    Values already present in the process win over the file.
+    """
+    try:
+        from dotenv import load_dotenv
+    except ImportError:  # python-dotenv is optional for --mock runs
+        return
+    load_dotenv(dotenv_path=(root or Path.cwd()) / ".env", override=False)
+
+
 def save_attempt(
     attempt: int,
     plan: ReproductionPlan,
@@ -132,6 +146,7 @@ def run(
 
 
 def main() -> int:
+    load_environment()
     parser = argparse.ArgumentParser(
         description="Turn a natural-language bug report into a reproduction test."
     )
